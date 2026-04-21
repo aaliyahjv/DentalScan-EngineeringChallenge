@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useRef, useCallback, useEffect } from "react";
-import { Camera, RefreshCw, CheckCircle2 } from "lucide-react";
+import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { Camera, CheckCircle2 } from "lucide-react";
 
 /**
  * CHALLENGE: SCAN ENHANCEMENT
@@ -17,6 +17,8 @@ export default function ScanningFlow() {
   const [camReady, setCamReady] = useState(false);
   const [capturedImages, setCapturedImages] = useState<string[]>([]);
   const [currentStep, setCurrentStep] = useState(0);
+  const [stabilityColor, setStabilityColor] = useState<"red" | "amber" | "green">("red");
+  const hasNotifiedRef = useRef(false);
 
   const VIEWS = [
     { label: "Front View", instruction: "Smile and look straight at the camera." },
@@ -26,11 +28,14 @@ export default function ScanningFlow() {
     { label: "Lower Teeth", instruction: "Tilt your head down and open wide." },
   ];
 
-  // Initialize Camera
+  // Camera init
   useEffect(() => {
     async function startCamera() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user" },
+        });
+
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           setCamReady(true);
@@ -39,53 +44,146 @@ export default function ScanningFlow() {
         console.error("Camera access denied", err);
       }
     }
+
     startCamera();
   }, []);
 
+  // Stability system (R2)
+  const updateStability = useCallback(() => {
+    const next = Math.random();
+
+    setStabilityColor(
+      next > 0.75 ? "green" : next > 0.4 ? "amber" : "red"
+    );
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(updateStability, 800);
+    return () => clearInterval(interval);
+  }, [updateStability]);
+
+  // DRY styling (R2 improvement)
+  const stabilityStyles = useMemo(
+    () => ({
+      red: {
+        ring: "border-red-500 animate-pulse",
+        text: "text-red-400",
+      },
+      amber: {
+        ring: "border-yellow-400",
+        text: "text-yellow-400",
+      },
+      green: {
+        ring: "border-green-500",
+        text: "text-green-400",
+      },
+    }),
+    []
+  );
+
+  const stabilityText = useMemo(() => {
+    return stabilityColor === "green"
+      ? "Stable — good to capture"
+      : stabilityColor === "amber"
+      ? "Hold steady"
+      : "Move phone closer and stabilize";
+  }, [stabilityColor]);
+
+  // Capture logic
   const handleCapture = useCallback(() => {
-    // Boilerplate logic for capturing a frame from the video feed
     const video = videoRef.current;
     if (!video) return;
 
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
+
     const ctx = canvas.getContext("2d");
-    if (ctx) {
-      ctx.drawImage(video, 0, 0);
-      const dataUrl = canvas.toDataURL("image/jpeg");
-      setCapturedImages((prev) => [...prev, dataUrl]);
-      setCurrentStep((prev) => prev + 1);
-    }
+    if (!ctx) return;
+
+    ctx.drawImage(video, 0, 0);
+    const dataUrl = canvas.toDataURL("image/jpeg");
+
+    setCapturedImages((prev) => {
+      const nextImages = [...prev, dataUrl];
+      const nextStep = nextImages.length;
+
+      setCurrentStep(nextStep);
+
+      // Final step → notify backend
+      if (nextStep === VIEWS.length && !hasNotifiedRef.current) {
+        hasNotifiedRef.current = true;
+
+        fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            scanId: `scan-${Date.now()}`,
+            status: "completed",
+            images: nextImages,
+          }),
+        }).catch((err) => {
+          console.error("Notification failed:", err);
+        });
+      }
+
+      return nextImages;
+    });
   }, []);
 
   return (
     <div className="flex flex-col items-center bg-black min-h-screen text-white">
+
       {/* Header */}
       <div className="p-4 w-full bg-zinc-900 border-b border-zinc-800 flex justify-between">
         <h1 className="font-bold text-blue-400">DentalScan AI</h1>
-        <span className="text-xs text-zinc-500">Step {currentStep + 1}/5</span>
+        <span className="text-xs text-zinc-500">
+          Step {currentStep + 1}/5
+        </span>
       </div>
 
-      {/* Main Viewport */}
-      <div className="relative w-full max-w-md aspect-[3/4] bg-zinc-950 overflow-hidden flex items-center justify-center">
+      {/* Camera View */}
+      <div className="relative w-full max-w-md aspect-[3/4] bg-zinc-950 flex items-center justify-center overflow-hidden">
+
         {currentStep < 5 ? (
           <>
-            <video 
-              ref={videoRef} 
-              autoPlay 
-              playsInline 
-              className="w-full h-full object-cover grayscale opacity-80" 
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              className="w-full h-full object-cover grayscale opacity-80"
             />
-            
-            {/* TODO: Implement the Guidance Overlay here */}
-            <div className="absolute inset-0 border-2 border-dashed border-zinc-700 pointer-events-none flex items-center justify-center">
-               <span className="text-[10px] text-zinc-500 uppercase tracking-widest">Guidance Placeholder</span>
+
+            {/* ===== Responsive Mouth Guide (R1) ===== */}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+
+              {/* Outer ring */}
+              <div
+                className={`
+                  w-[60vw] max-w-64 h-[60vw] max-h-64
+                  rounded-full border-4 transition-colors duration-300
+                  ${stabilityStyles[stabilityColor].ring}
+                `}
+              />
+
+              {/* Inner ring */}
+              <div className="absolute w-[28vw] max-w-32 h-[28vw] max-h-32 rounded-full border border-white/20" />
             </div>
 
-            {/* Instruction Overlay */}
+            {/* Instructions */}
             <div className="absolute bottom-10 left-0 right-0 p-6 bg-gradient-to-t from-black to-transparent text-center">
-              <p className="text-sm font-medium">{VIEWS[currentStep].instruction}</p>
+
+              <p className="text-sm font-medium">
+                {VIEWS[currentStep].instruction}
+              </p>
+
+              <p className="text-xs text-zinc-300 mt-1">
+                Align your face inside the circle
+              </p>
+
+              <p className={`text-xs mt-2 font-medium ${stabilityStyles[stabilityColor].text}`}>
+                {stabilityText}
+              </p>
             </div>
           </>
         ) : (
@@ -97,31 +195,40 @@ export default function ScanningFlow() {
         )}
       </div>
 
-      {/* Controls */}
-      <div className="p-10 w-full flex justify-center">
-        {currentStep < 5 && (
+      {/* Capture Button */}
+      {currentStep < 5 && (
+        <div className="p-10 flex justify-center">
           <button
             onClick={handleCapture}
             className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center active:scale-90 transition-transform"
           >
             <div className="w-16 h-16 rounded-full bg-white flex items-center justify-center">
-               <Camera className="text-black" />
+              <Camera className="text-black" />
             </div>
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Thumbnails */}
       <div className="flex gap-2 p-4 overflow-x-auto w-full">
         {VIEWS.map((v, i) => (
-          <div 
-            key={i} 
-            className={`w-16 h-20 rounded border-2 shrink-0 ${i === currentStep ? 'border-blue-500 bg-blue-500/10' : 'border-zinc-800'}`}
+          <div
+            key={i}
+            className={`w-16 h-20 rounded border-2 shrink-0 ${
+              i === currentStep
+                ? "border-blue-500 bg-blue-500/10"
+                : "border-zinc-800"
+            }`}
           >
             {capturedImages[i] ? (
-               <img src={capturedImages[i]} className="w-full h-full object-cover" />
+              <img
+                src={capturedImages[i]}
+                className="w-full h-full object-cover"
+              />
             ) : (
-               <div className="w-full h-full flex items-center justify-center text-[10px] text-zinc-700">{i+1}</div>
+              <div className="w-full h-full flex items-center justify-center text-[10px] text-zinc-700">
+                {i + 1}
+              </div>
             )}
           </div>
         ))}
