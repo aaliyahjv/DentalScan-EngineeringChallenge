@@ -17,18 +17,46 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { scanId, status } = body;
 
-    if (status === "completed") {
-      // TODO: Implement the notification creation logic here
-      // example: await prisma.notification.create({ ... })
-      
-      console.log(`[STUB] Notification triggered for scan ${scanId}`);
-      
-      return NextResponse.json({ ok: true, message: "Notification triggered" });
+    if (!scanId || typeof scanId !== "string") {
+      return NextResponse.json(
+        { error: "Invalid scanId" },
+        { status: 400 }
+      );
     }
 
-    return NextResponse.json({ ok: true });
+    if (status === "completed") {
+      let notificationSuccess = false;
+
+      try {
+        await prisma.notification.create({
+          data: {
+            userId: "demo-patient",
+            title: "Scan Completed",
+            message: `Scan ${scanId} has been successfully uploaded.`,
+            read: false,
+          },
+        });
+        notificationSuccess = true;
+      } catch (err) {
+        console.error("Notification creation failed:", err);
+      }
+
+      return NextResponse.json({
+        ok: true,
+        notificationTriggered: notificationSuccess,
+      });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      skipped: true,
+      message: "No notification triggered",
+    });
   } catch (err) {
-    console.error("Notification API Error:", err);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    console.error("FULL ERROR:", err);
+    return NextResponse.json(
+      { error: String(err) },
+      { status: 500 }
+    );
   }
 }
